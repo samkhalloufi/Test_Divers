@@ -1,0 +1,203 @@
+[
+  {
+    "id": "bacnet_read_points_tab",
+    "type": "tab",
+    "label": "BACnet Read Points UG65",
+    "disabled": false,
+    "info": "Lecture de 3 points BACnet/IP connus sur 192.168.0.210, deviceId 10000, Node-RED 3.0.2, sans module externe. Port distant 47808, port client local 47809."
+  },
+  {
+    "id": "bacnet_read_points_comment",
+    "type": "comment",
+    "z": "bacnet_read_points_tab",
+    "name": "Lecture points BACnet connus",
+    "info": "Device BACnet/IP: deviceId 10000, IP 192.168.0.210, port distant UDP 47808.\nPort local client UG65: UDP 47809, pour eviter les conflits avec les flows de decouverte ou services BACnet deja en 47808.\nPoints lus: analog-output 6, 14 et 22, propriete present-value (85).\nCliquer sur 'Lire les 3 consignes maintenant'. Les valeurs apparaissent dans le debug 'Valeurs BACnet lues'.\nSi le device impose absolument un client source 47808, modifier a la fois UDP in et outport UDP out de 47809 vers 47808, puis desactiver les autres tabs BACnet.",
+    "x": 250,
+    "y": 80,
+    "wires": []
+  },
+  {
+    "id": "bacnet_read_udp_in",
+    "type": "udp in",
+    "z": "bacnet_read_points_tab",
+    "name": "BACnet UDP in client 47809",
+    "iface": "",
+    "port": "47809",
+    "ipv": "udp4",
+    "multicast": "false",
+    "group": "",
+    "datatype": "buffer",
+    "x": 190,
+    "y": 280,
+    "wires": [
+      [
+        "bacnet_parse_present_value_ack"
+      ]
+    ]
+  },
+  {
+    "id": "bacnet_read_now_inject",
+    "type": "inject",
+    "z": "bacnet_read_points_tab",
+    "name": "Lire les 3 consignes maintenant",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "read",
+    "payloadType": "str",
+    "x": 210,
+    "y": 160,
+    "wires": [
+      [
+        "bacnet_build_present_value_reads"
+      ]
+    ]
+  },
+  {
+    "id": "bacnet_build_present_value_reads",
+    "type": "function",
+    "z": "bacnet_read_points_tab",
+    "name": "Construire ReadProperty present-value",
+    "func": "// Lecture BACnet/IP de points connus, sans module externe.\n// Device: 192.168.0.210 / deviceId 10000.\n// Points: ANALOG_OUTPUT instances 6, 14, 22.\nconst DEVICE = { ip: \"192.168.0.210\", port: 47808, deviceId: 10000 };\nconst PROP_PRESENT_VALUE = 85;\nconst POINTS = [\n    { objectName: \"Space Temperature Setpoint BAS|rt-1\", objectType: 1, objectTypeName: \"ANALOG_OUTPUT\", objectInstance: 6 },\n    { objectName: \"Space Temperature Setpoint BAS|rt-2\", objectType: 1, objectTypeName: \"ANALOG_OUTPUT\", objectInstance: 14 },\n    { objectName: \"Space Temperature Setpoint BAS|rt-3\", objectType: 1, objectTypeName: \"ANALOG_OUTPUT\", objectInstance: 22 }\n];\n\nfunction objectIdToBuffer(type, instance) {\n    const value = ((type & 0x3ff) << 22) | (instance & 0x3fffff);\n    return Buffer.from([(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);\n}\nfunction contextUnsigned(tagNumber, value) {\n    if (value <= 0xff) return Buffer.from([(tagNumber << 4) | 0x09, value]);\n    if (value <= 0xffff) return Buffer.from([(tagNumber << 4) | 0x0a, (value >>> 8) & 0xff, value & 0xff]);\n    return Buffer.from([(tagNumber << 4) | 0x0c, (value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);\n}\nfunction nextInvoke() {\n    const current = flow.get(\"bacnetReadInvoke\") || 1;\n    flow.set(\"bacnetReadInvoke\", current >= 255 ? 1 : current + 1);\n    return current;\n}\nfunction buildReadProperty(point) {\n    const invokeId = nextInvoke();\n    const apdu = Buffer.concat([\n        Buffer.from([0x00, 0x05, invokeId, 0x0c]), // confirmed request, max APDU, invokeId, ReadProperty\n        Buffer.from([0x0c]), objectIdToBuffer(point.objectType, point.objectInstance),\n        contextUnsigned(1, PROP_PRESENT_VALUE)\n    ]);\n    const npdu = Buffer.from([0x01, 0x04]); // BACnet version 1, expecting reply\n    const body = Buffer.concat([npdu, apdu]);\n    const bvlc = Buffer.from([0x81, 0x0a, (body.length + 4) >>> 8, (body.length + 4) & 0xff]);\n    return {\n        payload: Buffer.concat([bvlc, body]),\n        ip: DEVICE.ip,\n        port: DEVICE.port,\n        topic: `bacnet/read/${DEVICE.deviceId}/analog-output/${point.objectInstance}/present-value`,\n        bacnet: { device: DEVICE, point, propertyId: PROP_PRESENT_VALUE, invokeId }\n    };\n}\n\nconst pending = flow.get(\"bacnetReadPending\") || {};\nconst messages = POINTS.map(point => {\n    const read = buildReadProperty(point);\n    pending[read.bacnet.invokeId] = read.bacnet;\n    return read;\n});\nflow.set(\"bacnetReadPending\", pending);\nnode.status({ fill: \"blue\", shape: \"dot\", text: `${messages.length} lectures envoyees vers ${DEVICE.ip}` });\nreturn [messages];",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 520,
+    "y": 160,
+    "wires": [
+      [
+        "bacnet_read_rate_limit"
+      ]
+    ]
+  },
+  {
+    "id": "bacnet_read_rate_limit",
+    "type": "delay",
+    "z": "bacnet_read_points_tab",
+    "name": "Espacer les requetes 1/s",
+    "pauseType": "rate",
+    "timeout": "5",
+    "timeoutUnits": "seconds",
+    "rate": "1",
+    "nbRateUnits": "1",
+    "rateUnits": "second",
+    "randomFirst": "1",
+    "randomLast": "5",
+    "randomUnits": "seconds",
+    "drop": false,
+    "allowrate": false,
+    "outputs": 1,
+    "x": 790,
+    "y": 160,
+    "wires": [
+      [
+        "bacnet_read_udp_out"
+      ]
+    ]
+  },
+  {
+    "id": "bacnet_read_udp_out",
+    "type": "udp out",
+    "z": "bacnet_read_points_tab",
+    "name": "UDP out vers 192.168.0.210:47808 source 47809",
+    "addr": "192.168.0.210",
+    "iface": "",
+    "port": "47808",
+    "ipv": "udp4",
+    "outport": "47809",
+    "base64": false,
+    "multicast": "false",
+    "x": 1090,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "bacnet_parse_present_value_ack",
+    "type": "function",
+    "z": "bacnet_read_points_tab",
+    "name": "Decoder ReadProperty-ACK present-value",
+    "func": "// Decode les reponses ReadProperty-ACK pour present-value.\nconst BACNET_PORT = 47808;\nconst PROP_PRESENT_VALUE = 85;\n\nfunction readUInt(buf, offset, len) {\n    let v = 0;\n    for (let i = 0; i < len; i++) v = (v << 8) | buf[offset + i];\n    return v >>> 0;\n}\nfunction decodeObjectId(buf, offset) {\n    const value = readUInt(buf, offset, 4);\n    return { type: value >>> 22, instance: value & 0x3fffff };\n}\nfunction tagInfo(buf, offset) {\n    if (offset >= buf.length) return null;\n    const b = buf[offset];\n    let tag = b >>> 4;\n    const context = !!(b & 0x08);\n    const lvt = b & 0x07;\n    let header = 1;\n    if (tag === 0x0f) { tag = buf[offset + header]; header++; }\n    let len = lvt;\n    if (lvt === 5) { len = buf[offset + header]; header++; }\n    return { tag, context, lvt, len, valueOffset: offset + header, next: offset + header + len };\n}\nfunction skipNpdu(buf) {\n    if (buf.length < 6 || buf[0] !== 0x81) return -1;\n    let i = 4;\n    if (buf[i++] !== 0x01) return -1;\n    const control = buf[i++];\n    if (control & 0x20) {\n        i += 2;\n        const dlen = buf[i++];\n        i += dlen + 1;\n    }\n    if (control & 0x08) {\n        i += 2;\n        const slen = buf[i++];\n        i += slen;\n    }\n    if (control & 0x80) return -1;\n    return i;\n}\nfunction parseReadPropertyAck(buf, apduOffset) {\n    if ((buf[apduOffset] >>> 4) !== 3) return null;\n    const invokeId = buf[apduOffset + 1];\n    const service = buf[apduOffset + 2];\n    if (service !== 0x0c) return null;\n    let i = apduOffset + 3;\n    const tObj = tagInfo(buf, i);\n    if (!tObj || !tObj.context || tObj.tag !== 0) return null;\n    const object = decodeObjectId(buf, tObj.valueOffset);\n    i = tObj.next;\n    const tProp = tagInfo(buf, i);\n    if (!tProp || !tProp.context || tProp.tag !== 1) return null;\n    const propertyId = readUInt(buf, tProp.valueOffset, tProp.len);\n    i = tProp.next;\n    if (buf[i] !== 0x3e) return null; // opening tag [3]\n    return { invokeId, object, propertyId, valueOffset: i + 1 };\n}\nfunction parseError(buf, apduOffset) {\n    const pduType = buf[apduOffset] >>> 4;\n    if (pduType !== 5 && pduType !== 6 && pduType !== 7) return null;\n    return { invokeId: buf[apduOffset + 1], pduType, raw: buf.slice(apduOffset).toString(\"hex\") };\n}\nfunction decodeApplicationValue(buf, offset) {\n    const t = tagInfo(buf, offset);\n    if (!t || t.context) return { value: null, type: \"unknown\", raw: buf.slice(offset).toString(\"hex\") };\n    if (t.tag === 4 && t.len === 4) return { value: buf.readFloatBE(t.valueOffset), type: \"real\" };\n    if (t.tag === 5 && t.len === 8) return { value: buf.readDoubleBE(t.valueOffset), type: \"double\" };\n    if (t.tag === 2) return { value: readUInt(buf, t.valueOffset, t.len), type: \"unsigned\" };\n    if (t.tag === 3) return { value: readUInt(buf, t.valueOffset, t.len), type: \"signed-or-bitstring\" };\n    if (t.tag === 9) return { value: readUInt(buf, t.valueOffset, t.len), type: \"enumerated\" };\n    if (t.tag === 1) return { value: t.lvt === 1, type: \"boolean\" };\n    if (t.tag === 7 && t.len >= 1) return { value: buf.slice(t.valueOffset + 1, t.valueOffset + t.len).toString(\"utf8\"), type: \"character-string\" };\n    if (t.tag === 0) return { value: null, type: \"null\" };\n    return { value: null, type: `application-tag-${t.tag}`, raw: buf.slice(offset, t.next).toString(\"hex\") };\n}\n\nconst buf = Buffer.isBuffer(msg.payload) ? msg.payload : Buffer.from(msg.payload || []);\nconst apduOffset = skipNpdu(buf);\nif (apduOffset < 0) return null;\nconst pending = flow.get(\"bacnetReadPending\") || {};\n\nconst ack = parseReadPropertyAck(buf, apduOffset);\nif (ack) {\n    const req = pending[ack.invokeId];\n    if (!req || ack.propertyId !== PROP_PRESENT_VALUE) return null;\n    delete pending[ack.invokeId];\n    flow.set(\"bacnetReadPending\", pending);\n    const decoded = decodeApplicationValue(buf, ack.valueOffset);\n    msg.topic = `bacnet/value/${req.device.deviceId}/${req.point.objectTypeName}/${req.point.objectInstance}`;\n    msg.payload = {\n        timestamp: new Date().toISOString(),\n        deviceId: req.device.deviceId,\n        ip: req.device.ip,\n        objectName: req.point.objectName,\n        objectType: req.point.objectTypeName,\n        objectTypeId: req.point.objectType,\n        objectInstance: req.point.objectInstance,\n        property: \"present-value\",\n        propertyId: PROP_PRESENT_VALUE,\n        value: decoded.value,\n        valueType: decoded.type\n    };\n    node.status({ fill: \"green\", shape: \"dot\", text: `${req.point.objectInstance} = ${decoded.value}` });\n    return msg;\n}\n\nconst err = parseError(buf, apduOffset);\nif (err && pending[err.invokeId]) {\n    const req = pending[err.invokeId];\n    delete pending[err.invokeId];\n    flow.set(\"bacnetReadPending\", pending);\n    msg.topic = `bacnet/error/${req.device.deviceId}/${req.point.objectInstance}`;\n    msg.payload = { timestamp: new Date().toISOString(), point: req.point, error: err };\n    node.status({ fill: \"red\", shape: \"ring\", text: `erreur instance ${req.point.objectInstance}` });\n    return msg;\n}\nreturn null;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 510,
+    "y": 280,
+    "wires": [
+      [
+        "bacnet_read_values_debug"
+      ]
+    ]
+  },
+  {
+    "id": "bacnet_read_values_debug",
+    "type": "debug",
+    "z": "bacnet_read_points_tab",
+    "name": "Valeurs BACnet lues",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 820,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "bacnet_read_reset_inject",
+    "type": "inject",
+    "z": "bacnet_read_points_tab",
+    "name": "RAZ lectures BACnet",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "reset",
+    "payloadType": "str",
+    "x": 190,
+    "y": 380,
+    "wires": [
+      [
+        "bacnet_read_reset_function"
+      ]
+    ]
+  },
+  {
+    "id": "bacnet_read_reset_function",
+    "type": "function",
+    "z": "bacnet_read_points_tab",
+    "name": "Effacer contexte lecture",
+    "func": "flow.set(\"bacnetReadPending\", {});\nflow.set(\"bacnetReadInvoke\", 1);\nnode.status({ fill: \"grey\", shape: \"ring\", text: \"contexte lecture efface\" });\nmsg.payload = \"Contexte de lecture BACnet efface\";\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 450,
+    "y": 380,
+    "wires": [
+      [
+        "bacnet_read_values_debug"
+      ]
+    ]
+  }
+]

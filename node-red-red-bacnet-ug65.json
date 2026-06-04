@@ -1,0 +1,230 @@
+[
+  {
+    "id": "red_bacnet_ug65_tab",
+    "type": "tab",
+    "label": "red-bacnet UG65",
+    "disabled": false,
+    "info": "Flow utilisant @halsystems/red-bacnet pour BACnet/IP sur UG65. Gateway 192.168.0.150, device 10000 @ 192.168.0.210."
+  },
+  {
+    "id": "red_bacnet_ug65_comment",
+    "type": "comment",
+    "z": "red_bacnet_ug65_tab",
+    "name": "Pré-requis",
+    "info": "Installer d'abord le module @halsystems/red-bacnet dans Node-RED.\nConfiguration BACnet client: interface 192.168.0.150, port 47808, broadcast 192.168.0.255, timeout 6000 ms.\nDevice cible: deviceId 10000, IP 192.168.0.210.\nTester dans l'ordre: 1) Discover device 10000, 2) Discover points device connu, 3) Read 3 points connus.",
+    "x": 150,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "red_bacnet_discover_device_inject",
+    "type": "inject",
+    "z": "red_bacnet_ug65_tab",
+    "name": "1 - Discover device 10000",
+    "props": [
+      {
+        "p": "lowLimit",
+        "v": "10000",
+        "vt": "num"
+      },
+      {
+        "p": "highLimit",
+        "v": "10000",
+        "vt": "num"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 180,
+    "y": 120,
+    "wires": [
+      [
+        "red_bacnet_discover_device"
+      ]
+    ]
+  },
+  {
+    "id": "red_bacnet_discover_device",
+    "type": "discover device",
+    "z": "red_bacnet_ug65_tab",
+    "name": "discover device 10000",
+    "client": "red_bacnet_client_ug65",
+    "network": 65535,
+    "lowLimit": "10000",
+    "highLimit": "10000",
+    "whoIsTimeout": "6000",
+    "readDeviceTimeout": "8000",
+    "x": 450,
+    "y": 120,
+    "wires": [
+      [
+        "red_bacnet_devices_debug",
+        "red_bacnet_discover_points"
+      ]
+    ]
+  },
+  {
+    "id": "red_bacnet_devices_debug",
+    "type": "debug",
+    "z": "red_bacnet_ug65_tab",
+    "name": "Devices red-bacnet",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 760,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "red_bacnet_manual_points_inject",
+    "type": "inject",
+    "z": "red_bacnet_ug65_tab",
+    "name": "2 - Discover points device connu",
+    "props": [
+      {
+        "p": "id",
+        "v": "discoverPoints",
+        "vt": "str"
+      },
+      {
+        "p": "devices",
+        "v": "[{\"deviceId\":10000,\"network\":null,\"ipAddress\":\"192.168.0.210\",\"macAddress\":null,\"segmentation\":0,\"maxApdu\":1476,\"vendorId\":0,\"deviceName\":\"Device_10000\"}]",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 190,
+    "y": 220,
+    "wires": [
+      [
+        "red_bacnet_discover_points"
+      ]
+    ]
+  },
+  {
+    "id": "red_bacnet_discover_points",
+    "type": "discover point",
+    "z": "red_bacnet_ug65_tab",
+    "name": "discover points device 10000",
+    "client": "red_bacnet_client_ug65",
+    "discoverMode": "0",
+    "readMethod": "0",
+    "groupExportDeviceCount": "1",
+    "maxConcurrentDeviceRead": "1",
+    "maxConcurrentSinglePointRead": "5",
+    "x": 480,
+    "y": 220,
+    "wires": [
+      [
+        "red_bacnet_points_debug"
+      ]
+    ]
+  },
+  {
+    "id": "red_bacnet_points_debug",
+    "type": "debug",
+    "z": "red_bacnet_ug65_tab",
+    "name": "Points red-bacnet",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 760,
+    "y": 220,
+    "wires": []
+  },
+  {
+    "id": "red_bacnet_read_known_inject",
+    "type": "inject",
+    "z": "red_bacnet_ug65_tab",
+    "name": "3 - Read 3 points connus",
+    "props": [
+      {
+        "p": "id",
+        "v": "readPoints",
+        "vt": "str"
+      },
+      {
+        "p": "devices",
+        "v": "[{\"deviceId\":10000,\"network\":null,\"ipAddress\":\"192.168.0.210\",\"macAddress\":null,\"segmentation\":0,\"maxApdu\":1476,\"vendorId\":0,\"deviceName\":\"Device_10000\"}]",
+        "vt": "json"
+      },
+      {
+        "p": "points",
+        "v": "[{\"deviceName\":\"Device_10000\",\"pointName\":\"Space Temperature Setpoint BAS|rt-1\",\"bacType\":1,\"bacInstance\":6,\"bacProp\":85,\"valueType\":4},{\"deviceName\":\"Device_10000\",\"pointName\":\"Space Temperature Setpoint BAS|rt-2\",\"bacType\":1,\"bacInstance\":14,\"bacProp\":85,\"valueType\":4},{\"deviceName\":\"Device_10000\",\"pointName\":\"Space Temperature Setpoint BAS|rt-3\",\"bacType\":1,\"bacInstance\":22,\"bacProp\":85,\"valueType\":4}]",
+        "vt": "json"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "x": 180,
+    "y": 340,
+    "wires": [
+      [
+        "red_bacnet_read_points"
+      ]
+    ]
+  },
+  {
+    "id": "red_bacnet_read_points",
+    "type": "read point",
+    "z": "red_bacnet_ug65_tab",
+    "name": "read AO present-values",
+    "client": "red_bacnet_client_ug65",
+    "readMethod": "0",
+    "maxConcurrentDeviceRead": "1",
+    "maxConcurrentSinglePointRead": "3",
+    "x": 450,
+    "y": 340,
+    "wires": [
+      [
+        "red_bacnet_read_debug"
+      ]
+    ]
+  },
+  {
+    "id": "red_bacnet_read_debug",
+    "type": "debug",
+    "z": "red_bacnet_ug65_tab",
+    "name": "Valeurs red-bacnet",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 740,
+    "y": 340,
+    "wires": []
+  },
+  {
+    "id": "red_bacnet_client_ug65",
+    "type": "bacnet client",
+    "name": "UG65 BACnet client",
+    "interface": "192.168.0.150",
+    "port": "47808",
+    "broadcastAddress": "192.168.0.255",
+    "apduTimeout": "6000"
+  }
+]
