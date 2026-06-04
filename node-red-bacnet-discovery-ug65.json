@@ -1,0 +1,234 @@
+[
+  {
+    "id": "bacnet_discovery_ug65_tab",
+    "type": "tab",
+    "label": "BACnet Discovery UG65",
+    "disabled": false,
+    "info": "Flow BACnet/IP sans module externe, compatible Node-RED 3.0.2. Envoie Who-Is depuis UDP/47808 vers le broadcast dirige 192.168.0.255 et en unicast vers 192.168.0.210, ecoute les I-Am, puis lit objectList/objectName."
+  },
+  {
+    "id": "bacnet_readme_comment",
+    "type": "comment",
+    "z": "bacnet_discovery_ug65_tab",
+    "name": "Mode d'emploi BACnet/IP UG65",
+    "info": "1) Importer ce flow dans Node-RED 3.0.2 sur l'UG65.\n2) Verifier que l'UG65 et le device BACnet/IP sont dans le meme LAN/VLAN.\n3) Le flow ecoute UDP/47808 et envoie le Who-Is depuis le meme port source 47808.\n4) Par defaut, il envoie vers le broadcast dirige 192.168.0.255 et en unicast vers 192.168.0.210. Adapter ces IP si le LAN de l'UG65 n'est pas 192.168.0.0/24.\n5) Cliquer sur l'injecteur Who-Is.\n6) Les devices I-Am apparaissent dans le debug 'Devices BACnet trouves'. Les objets/points et leurs objectName apparaissent dans 'Points BACnet trouves'.\n7) Important: desactiver les autres tabs/services BACnet qui utilisent UDP/47808 pendant le test.\n8) Les lectures objectList/objectName repartent aussi depuis le port source 47808; sinon les reponses peuvent revenir sur un port ephemere non ecoute.",
+    "x": 220,
+    "y": 80,
+    "wires": []
+  },
+  {
+    "id": "bacnet_udp_in",
+    "type": "udp in",
+    "z": "bacnet_discovery_ug65_tab",
+    "name": "BACnet UDP in 47808",
+    "iface": "",
+    "port": "47808",
+    "ipv": "udp4",
+    "multicast": "false",
+    "group": "",
+    "datatype": "buffer",
+    "x": 180,
+    "y": 280,
+    "wires": [
+      [
+        "bacnet_parse_and_walk"
+      ]
+    ]
+  },
+  {
+    "id": "bacnet_whois_inject",
+    "type": "inject",
+    "z": "bacnet_discovery_ug65_tab",
+    "name": "Who-Is BACnet/IP broadcast",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 210,
+    "y": 160,
+    "wires": [
+      [
+        "bacnet_build_whois"
+      ]
+    ]
+  },
+  {
+    "id": "bacnet_build_whois",
+    "type": "function",
+    "z": "bacnet_discovery_ug65_tab",
+    "name": "Construire Who-Is",
+    "func": "// Who-Is BACnet/IP pour UG65 / Node-RED 3.0.2.\n// Points importants pour que la decouverte fonctionne:\n// - le node UDP in 47808 est place avant le node UDP out dans le JSON;\n// - le node UDP out utilise outport=47808 pour que les I-Am unicast reviennent sur le port ecoute;\n// - on evite le global broadcast seul: on envoie un broadcast dirige du LAN + un Who-Is unicast vers le device connu.\nconst BACNET_PORT = 47808;\nconst DIRECTED_BROADCAST = \"192.168.0.255\"; // adapter si l'UG65 n'est pas en 192.168.0.0/24\nconst KNOWN_DEVICE_IP = \"192.168.0.210\";  // device fourni pour le test\n\nconst broadcastWhoIs = Buffer.from([\n    0x81, 0x0b, 0x00, 0x0c, // BVLC: Original-Broadcast-NPDU, longueur 12\n    0x01, 0x20,             // NPDU: version 1, destination presente\n    0xff, 0xff, 0x00, 0xff, // DNET global broadcast, DLEN=0, Hop count=255\n    0x10, 0x08              // APDU: unconfirmed request, Who-Is\n]);\n\nconst unicastWhoIs = Buffer.from([\n    0x81, 0x0a, 0x00, 0x08, // BVLC: Original-Unicast-NPDU, longueur 8\n    0x01, 0x00,             // NPDU: version 1, pas de destination BACnet explicite\n    0x10, 0x08              // APDU: unconfirmed request, Who-Is\n]);\n\nconst messages = [\n    { payload: broadcastWhoIs, ip: DIRECTED_BROADCAST, port: BACNET_PORT, topic: \"bacnet/whois/directed-broadcast\" },\n    { payload: unicastWhoIs, ip: KNOWN_DEVICE_IP, port: BACNET_PORT, topic: \"bacnet/whois/unicast-known-device\" }\n];\nnode.status({ fill: \"blue\", shape: \"dot\", text: `Who-Is vers ${DIRECTED_BROADCAST} + ${KNOWN_DEVICE_IP} depuis UDP/${BACNET_PORT}` });\nreturn [messages];",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 480,
+    "y": 160,
+    "wires": [
+      [
+        "bacnet_udp_broadcast_out"
+      ]
+    ]
+  },
+  {
+    "id": "bacnet_udp_broadcast_out",
+    "type": "udp out",
+    "z": "bacnet_discovery_ug65_tab",
+    "name": "UDP out Who-Is source 47808",
+    "addr": "",
+    "iface": "",
+    "port": "",
+    "ipv": "udp4",
+    "outport": "47808",
+    "base64": false,
+    "multicast": "broad",
+    "x": 760,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "bacnet_parse_and_walk",
+    "type": "function",
+    "z": "bacnet_discovery_ug65_tab",
+    "name": "Decoder I-Am + lire objectList/objectName",
+    "func": "// Decodeur minimal BACnet/IP pour decouverte, sans node externe.\n// Sortie 1: devices I-Am, sortie 2: requetes UDP ReadProperty, sortie 3: points/objets trouves.\nconst BACNET_PORT = 47808;\nconst PROP_OBJECT_LIST = 76;\nconst PROP_OBJECT_NAME = 77;\nconst OBJECT_TYPES = {\n    0: \"analog-input\", 1: \"analog-output\", 2: \"analog-value\",\n    3: \"binary-input\", 4: \"binary-output\", 5: \"binary-value\",\n    8: \"device\", 13: \"multi-state-input\", 14: \"multi-state-output\", 19: \"multi-state-value\"\n};\n\nfunction readUInt(buf, offset, len) {\n    let v = 0;\n    for (let i = 0; i < len; i++) v = (v << 8) | buf[offset + i];\n    return v >>> 0;\n}\nfunction objectIdToBuffer(type, instance) {\n    const value = ((type & 0x3ff) << 22) | (instance & 0x3fffff);\n    return Buffer.from([(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);\n}\nfunction decodeObjectId(buf, offset) {\n    const value = readUInt(buf, offset, 4);\n    const type = value >>> 22;\n    const instance = value & 0x3fffff;\n    return { type, instance, typeName: OBJECT_TYPES[type] || `object-type-${type}`, id: `${type}:${instance}` };\n}\nfunction tagInfo(buf, offset) {\n    if (offset >= buf.length) return null;\n    const b = buf[offset];\n    let tag = b >>> 4;\n    const context = !!(b & 0x08);\n    let lvt = b & 0x07;\n    let header = 1;\n    if (tag === 0x0f) { tag = buf[offset + header]; header++; }\n    let len = lvt;\n    if (lvt === 5) { len = buf[offset + header]; header++; }\n    return { tag, context, lvt, len, header, valueOffset: offset + header, next: offset + header + len };\n}\nfunction skipNpdu(buf) {\n    if (buf.length < 6 || buf[0] !== 0x81) return -1;\n    let i = 4;\n    if (buf[i++] !== 0x01) return -1;\n    const control = buf[i++];\n    if (control & 0x20) {\n        i += 2;\n        const dlen = buf[i++];\n        i += dlen + 1; // DADR + hop count\n    }\n    if (control & 0x08) {\n        i += 2;\n        const slen = buf[i++];\n        i += slen;\n    }\n    if (control & 0x80) return -1;\n    return i;\n}\nfunction parseIAm(buf, apduOffset) {\n    if (buf[apduOffset] !== 0x10 || buf[apduOffset + 1] !== 0x00) return null;\n    let i = apduOffset + 2;\n    const tObj = tagInfo(buf, i);\n    if (!tObj || tObj.tag !== 12 || tObj.context || tObj.len !== 4) return null;\n    const deviceObject = decodeObjectId(buf, tObj.valueOffset);\n    i = tObj.next;\n    const tMax = tagInfo(buf, i);\n    const maxApdu = tMax ? readUInt(buf, tMax.valueOffset, tMax.len) : null;\n    i = tMax ? tMax.next : i;\n    const tSeg = tagInfo(buf, i);\n    const segmentation = tSeg ? readUInt(buf, tSeg.valueOffset, tSeg.len) : null;\n    i = tSeg ? tSeg.next : i;\n    const tVendor = tagInfo(buf, i);\n    const vendorId = tVendor ? readUInt(buf, tVendor.valueOffset, tVendor.len) : null;\n    return { deviceId: deviceObject.instance, object: deviceObject, maxApdu, segmentation, vendorId };\n}\nfunction nextInvoke() {\n    const current = flow.get(\"bacnetInvoke\") || 1;\n    const next = current >= 255 ? 1 : current + 1;\n    flow.set(\"bacnetInvoke\", next);\n    return current;\n}\nfunction contextUnsigned(tagNumber, value) {\n    if (value <= 0xff) return Buffer.from([(tagNumber << 4) | 0x09, value]);\n    if (value <= 0xffff) return Buffer.from([(tagNumber << 4) | 0x0a, (value >>> 8) & 0xff, value & 0xff]);\n    return Buffer.from([(tagNumber << 4) | 0x0c, (value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);\n}\nfunction buildReadProperty(device, objectType, objectInstance, propertyId, arrayIndex, pendingType) {\n    const invokeId = nextInvoke();\n    const apduParts = [\n        Buffer.from([0x00, 0x05, invokeId, 0x0c]), // confirmed request, max APDU, invoke, ReadProperty\n        Buffer.from([0x0c]), objectIdToBuffer(objectType, objectInstance),\n        contextUnsigned(1, propertyId)\n    ];\n    if (arrayIndex !== undefined && arrayIndex !== null) apduParts.push(contextUnsigned(2, arrayIndex));\n    const npdu = Buffer.from([0x01, 0x04]); // version 1 + expecting reply\n    const body = Buffer.concat([npdu, ...apduParts]);\n    const bvlc = Buffer.from([0x81, 0x0a, (body.length + 4) >>> 8, (body.length + 4) & 0xff]);\n    const pending = flow.get(\"bacnetPending\") || {};\n    pending[invokeId] = { type: pendingType, deviceKey: device.key, objectType, objectInstance, propertyId, arrayIndex };\n    flow.set(\"bacnetPending\", pending);\n    return { payload: Buffer.concat([bvlc, body]), ip: device.ip, port: device.port || BACNET_PORT };\n}\nfunction parseComplexAck(buf, apduOffset) {\n    if ((buf[apduOffset] >>> 4) !== 3) return null;\n    const invokeId = buf[apduOffset + 1];\n    const service = buf[apduOffset + 2];\n    if (service !== 0x0c) return null;\n    let i = apduOffset + 3;\n    const tObj = tagInfo(buf, i);\n    if (!tObj || !tObj.context || tObj.tag !== 0) return null;\n    const object = decodeObjectId(buf, tObj.valueOffset);\n    i = tObj.next;\n    const tProp = tagInfo(buf, i);\n    if (!tProp || !tProp.context || tProp.tag !== 1) return null;\n    const propertyId = readUInt(buf, tProp.valueOffset, tProp.len);\n    i = tProp.next;\n    let arrayIndex = null;\n    const maybeArray = tagInfo(buf, i);\n    if (maybeArray && maybeArray.context && maybeArray.tag === 2) {\n        arrayIndex = readUInt(buf, maybeArray.valueOffset, maybeArray.len);\n        i = maybeArray.next;\n    }\n    // Dans un ReadProperty-ACK BACnet, la valeur n'est pas directement a i:\n    // elle est encapsulee dans un opening tag contextuel [3] (0x3e), puis un closing tag [3] (0x3f).\n    // L'ancienne version essayait donc de decoder 0x3e comme une valeur BACnet et s'arretait avant objectList[0].\n    if (buf[i] !== 0x3e) return null;\n    const valueOffset = i + 1;\n    const valueEnd = buf.indexOf(0x3f, valueOffset);\n    return { invokeId, object, propertyId, arrayIndex, valueOffset, valueEnd: valueEnd >= 0 ? valueEnd : buf.length };\n}\nfunction decodeUnsignedApplication(buf, offset) {\n    const t = tagInfo(buf, offset);\n    if (!t || t.context || t.tag !== 2) return null;\n    return readUInt(buf, t.valueOffset, t.len);\n}\nfunction decodeObjectIdApplication(buf, offset) {\n    const t = tagInfo(buf, offset);\n    if (!t || t.context || t.tag !== 12 || t.len !== 4) return null;\n    return decodeObjectId(buf, t.valueOffset);\n}\nfunction decodeStringApplication(buf, offset) {\n    const t = tagInfo(buf, offset);\n    if (!t || t.context || t.tag !== 7 || t.len < 1) return null;\n    // Premier octet = encoding BACnet. 0 est courant pour ANSI/UTF-8 compatible ASCII.\n    return buf.slice(t.valueOffset + 1, t.valueOffset + t.len).toString(\"utf8\").replace(/\\u0000/g, \"\");\n}\n\nconst buf = Buffer.isBuffer(msg.payload) ? msg.payload : Buffer.from(msg.payload || []);\nconst apduOffset = skipNpdu(buf);\nif (apduOffset < 0 || apduOffset >= buf.length) return null;\nconst sourceIp = msg.ip || msg._session?.remoteAddress || \"unknown\";\nconst sourcePort = msg.port || msg._session?.remotePort || BACNET_PORT;\n\nconst iam = parseIAm(buf, apduOffset);\nif (iam) {\n    const key = `${sourceIp}:${iam.deviceId}`;\n    const devices = flow.get(\"bacnetDevices\") || {};\n    devices[key] = { key, ip: sourceIp, port: sourcePort, lastSeen: new Date().toISOString(), ...iam, objectCount: null, points: {} };\n    flow.set(\"bacnetDevices\", devices);\n    node.status({fill: \"green\", shape: \"dot\", text: `I-Am ${iam.deviceId} @ ${sourceIp}`});\n    const deviceMsg = { payload: devices[key], topic: `bacnet/device/${iam.deviceId}` };\n    const readCount = buildReadProperty(devices[key], 8, iam.deviceId, PROP_OBJECT_LIST, 0, \"objectListCount\");\n    return [deviceMsg, readCount, null];\n}\n\nconst ack = parseComplexAck(buf, apduOffset);\nif (!ack) return null;\nconst pending = flow.get(\"bacnetPending\") || {};\nconst req = pending[ack.invokeId];\nif (!req) return null;\ndelete pending[ack.invokeId];\nflow.set(\"bacnetPending\", pending);\nconst devices = flow.get(\"bacnetDevices\") || {};\nconst device = devices[req.deviceKey];\nif (!device) return null;\n\nif (req.type === \"objectListCount\") {\n    const count = decodeUnsignedApplication(buf, ack.valueOffset);\n    if (count === null) return null;\n    device.objectCount = count;\n    device.nextObjectIndex = 1;\n    devices[req.deviceKey] = device;\n    flow.set(\"bacnetDevices\", devices);\n    node.status({fill: \"blue\", shape: \"dot\", text: `${device.deviceId}: ${count} objets`});\n    return [null, buildReadProperty(device, 8, device.deviceId, PROP_OBJECT_LIST, 1, \"objectListItem\"), null];\n}\nif (req.type === \"objectListItem\") {\n    const object = decodeObjectIdApplication(buf, ack.valueOffset);\n    if (!object) return null;\n    device.points[object.id] = { ...object, name: null };\n    device.nextObjectIndex = (req.arrayIndex || 0) + 1;\n    devices[req.deviceKey] = device;\n    flow.set(\"bacnetDevices\", devices);\n    const nameReq = buildReadProperty(device, object.type, object.instance, PROP_OBJECT_NAME, null, \"objectName\");\n    return [null, nameReq, { payload: { deviceId: device.deviceId, ip: device.ip, point: device.points[object.id] }, topic: `bacnet/point/${device.deviceId}/${object.id}` }];\n}\nif (req.type === \"objectName\") {\n    const name = decodeStringApplication(buf, ack.valueOffset);\n    const objectId = `${req.objectType}:${req.objectInstance}`;\n    if (!device.points[objectId]) device.points[objectId] = { type: req.objectType, instance: req.objectInstance, typeName: OBJECT_TYPES[req.objectType] || `object-type-${req.objectType}`, id: objectId };\n    device.points[objectId].name = name;\n    devices[req.deviceKey] = device;\n    flow.set(\"bacnetDevices\", devices);\n    let nextReq = null;\n    if (device.objectCount && device.nextObjectIndex <= device.objectCount) {\n        nextReq = buildReadProperty(device, 8, device.deviceId, PROP_OBJECT_LIST, device.nextObjectIndex, \"objectListItem\");\n    } else {\n        node.status({fill: \"green\", shape: \"ring\", text: `${device.deviceId}: decouverte terminee`});\n    }\n    return [null, nextReq, { payload: { deviceId: device.deviceId, ip: device.ip, point: device.points[objectId], total: device.objectCount }, topic: `bacnet/point/${device.deviceId}/${objectId}` }];\n}\nreturn null;",
+    "outputs": 3,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 530,
+    "y": 280,
+    "wires": [
+      [
+        "bacnet_devices_debug"
+      ],
+      [
+        "bacnet_udp_unicast_out"
+      ],
+      [
+        "bacnet_points_debug"
+      ]
+    ]
+  },
+  {
+    "id": "bacnet_udp_unicast_out",
+    "type": "udp out",
+    "z": "bacnet_discovery_ug65_tab",
+    "name": "UDP out ReadProperty source 47808",
+    "addr": "",
+    "iface": "",
+    "port": "",
+    "ipv": "udp4",
+    "outport": "47808",
+    "base64": false,
+    "multicast": "false",
+    "x": 870,
+    "y": 260,
+    "wires": []
+  },
+  {
+    "id": "bacnet_devices_debug",
+    "type": "debug",
+    "z": "bacnet_discovery_ug65_tab",
+    "name": "Devices BACnet trouves",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 880,
+    "y": 320,
+    "wires": []
+  },
+  {
+    "id": "bacnet_points_debug",
+    "type": "debug",
+    "z": "bacnet_discovery_ug65_tab",
+    "name": "Points BACnet trouves",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 880,
+    "y": 380,
+    "wires": []
+  },
+  {
+    "id": "bacnet_reset_inject",
+    "type": "inject",
+    "z": "bacnet_discovery_ug65_tab",
+    "name": "RAZ memoire decouverte",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "reset",
+    "payloadType": "str",
+    "x": 190,
+    "y": 420,
+    "wires": [
+      [
+        "bacnet_reset_function"
+      ]
+    ]
+  },
+  {
+    "id": "bacnet_reset_function",
+    "type": "function",
+    "z": "bacnet_discovery_ug65_tab",
+    "name": "Effacer contexte BACnet",
+    "func": "flow.set(\"bacnetDevices\", {});\nflow.set(\"bacnetPending\", {});\nflow.set(\"bacnetInvoke\", 1);\nnode.status({fill: \"grey\", shape: \"ring\", text: \"memoire effacee\"});\nmsg.payload = \"Memoire de decouverte BACnet effacee\";\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 460,
+    "y": 420,
+    "wires": [
+      [
+        "bacnet_reset_debug"
+      ]
+    ]
+  },
+  {
+    "id": "bacnet_reset_debug",
+    "type": "debug",
+    "z": "bacnet_discovery_ug65_tab",
+    "name": "Reset BACnet",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 710,
+    "y": 420,
+    "wires": []
+  }
+]
